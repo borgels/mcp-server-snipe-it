@@ -2,15 +2,32 @@ import { perUserAuthEnabled } from './policy.js';
 
 export type CapabilityRisk = 'read' | 'write';
 
+/**
+ * 'tool'  — there is a registered MCP tool with this exact id.
+ * 'guide' — no such tool: this entry documents how to COMPOSE existing tools
+ *           for something the API has no single endpoint for. The discovery
+ *           index is the only place a model looks before acting, so a workflow
+ *           that needs three calls in a particular order belongs here rather
+ *           than nowhere.
+ */
+export type CapabilityKind = 'tool' | 'guide';
+
 export interface SnipeItCapability {
   id: string;
   title: string;
   description: string;
   risk: CapabilityRisk;
+  /** Defaults to 'tool' when omitted. */
+  kind?: CapabilityKind;
   examples: unknown[];
   identifierFormats: string[];
   safetyNotes: string[];
   keywords: string[];
+}
+
+/** Entries that document a workflow rather than name a tool. */
+export function isGuide(capability: SnipeItCapability): boolean {
+  return capability.kind === 'guide';
 }
 
 export const READ_TOOL_ANNOTATIONS = {
@@ -110,12 +127,70 @@ export const SNIPEIT_CAPABILITIES: SnipeItCapability[] = [
     id: 'snipeit_list_entities',
     title: 'List Entities (Snipe-IT)',
     description:
-      'List any other entity type: licenses, accessories, consumables, components, users, locations, status labels, categories, manufacturers, models, companies, departments, suppliers, custom fields, fieldsets, kits, maintenances, depreciations, groups.',
+      'List any other entity type: licenses, accessories, consumables, components, users, locations, status labels, categories, manufacturers, models, companies, departments, suppliers, custom fields, fieldsets, kits, maintenances, depreciations, groups. Narrow server-side with `filters` rather than paging everything.',
     risk: 'read',
-    examples: [{ entity: 'licenses' }, { entity: 'users', search: 'anders' }],
-    identifierFormats: ['entity: one of the listed type names'],
-    safetyNotes: [PAGINATION_NOTE],
-    keywords: ['licenses', 'licenser', 'accessories', 'tilbehør', 'consumables', 'users', 'brugere', 'locations', 'lokationer', 'models'],
+    examples: [
+      { entity: 'licenses' },
+      { entity: 'users', search: 'anders' },
+      { entity: 'licenses', filters: { expires: true } },
+      { entity: 'licenses', filters: { company_id: 3, maintained: true } },
+      { entity: 'maintenances', filters: { asset_id: 17, completed: false } },
+      { entity: 'users', filters: { department_id: 2, activated: true } },
+    ],
+    identifierFormats: [
+      'entity: one of the listed type names',
+      'filters: {key: value} — keys are per-entity; an unknown key is rejected with the valid list',
+    ],
+    safetyNotes: [
+      PAGINATION_NOTE,
+      'A filter key this entity does not support is an error, not a silent no-op — so an unfiltered list is never mistaken for a filtered answer.',
+    ],
+    keywords: [
+      'licenses', 'licenser', 'accessories', 'tilbehør', 'consumables', 'users', 'brugere', 'locations',
+      'lokationer', 'models', 'filter', 'expiring', 'udløber', 'expired', 'compliance', 'per company',
+      'pr selskab', 'maintained',
+    ],
+  },
+  {
+    id: 'snipeit_custom_fields_howto',
+    title: 'How to read and write custom fields',
+    description:
+      'Custom-field values live on the asset itself, keyed by db_column_name (e.g. "_snipeit_mac_address_1"), NOT by display name. Discover the keys with snipeit_get_entity entity=fieldsets include=fields (or entity=fields): each field returns db_column_name, format (validation regex), type, required, field_encrypted and field_values_array (allowed dropdown values). Then send that key in the payload of snipeit_create_asset or the patch of snipeit_update_asset.',
+    risk: 'read',
+    kind: 'guide',
+    examples: [
+      { step: 1, tool: 'snipeit_get_entity', args: { entity: 'fieldsets', id: 2, include: 'fields' } },
+      { step: 2, tool: 'snipeit_update_asset', args: { id: 17, patch: { _snipeit_mac_address_1: 'a4:83:e7:11:22:33' } } },
+    ],
+    identifierFormats: ['db_column_name is always _snipeit_<slugified name>_<field id>'],
+    safetyNotes: [
+      'Using the display name instead of db_column_name silently does nothing — the field is simply not in the payload Snipe-IT recognises.',
+      'Respect `format`: it is the server-side validation regex, and a mismatch comes back as a 200 with status:"error".',
+      'A field with field_encrypted=true needs the right permission to read or write, and its value is not returned in plain listings.',
+    ],
+    keywords: [
+      'custom field', 'custom fields', 'customfields', 'brugerdefineret felt', 'felter', 'fieldset',
+      'db_column_name', 'snipeit_', 'extra fields', 'metadata',
+    ],
+  },
+  {
+    id: 'snipeit_kits_howto',
+    title: 'How to hand out a predefined kit',
+    description:
+      'Kits ("packages" of gear) can be listed and inspected, but the Snipe-IT API has NO kit-checkout endpoint — only the web UI can hand out a whole kit in one action. To do it through the API: read the kit contents with snipeit_get_entity entity=kits include=models|licenses|accessories|consumables, pick concrete assets for each model, then call snipeit_checkout once per item.',
+    risk: 'read',
+    kind: 'guide',
+    examples: [
+      { step: 1, tool: 'snipeit_get_entity', args: { entity: 'kits', id: 1, include: 'models' } },
+      { step: 2, tool: 'snipeit_list_assets', args: { modelId: 3, status: 'RTD' } },
+      { step: 3, tool: 'snipeit_checkout', args: { type: 'asset', id: 42, targetType: 'user', targetId: 9 } },
+    ],
+    identifierFormats: ['A kit lists MODELS, not specific assets — you must choose an available asset per model.'],
+    safetyNotes: [
+      'There is no atomic kit checkout: the per-item calls can partially succeed, so check each result rather than assuming the whole kit went out.',
+      'Consumables in a kit are irreversible once checked out.',
+    ],
+    keywords: ['kit', 'kits', 'pakke', 'pakker', 'bundle', 'predefined kit', 'onboarding', 'starter pack'],
   },
   {
     id: 'snipeit_get_entity',

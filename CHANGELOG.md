@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.3.0
+
+Makes reachable what the API already exposed. No new tools — the tool count is
+deliberately unchanged, because on a shared server every extra tool makes the
+model's choice worse for everyone, while a parameter makes the server stronger
+for free.
+
+- `snipeit_list_entities` gains `filters`: server-side narrowing on every one of
+  the 19 entity types. The allowed keys per entity are transcribed from the
+  `$request->filled('…')` guards in each Snipe-IT controller's `index()`, so
+  they are what the API actually honours rather than a guess. This is what makes
+  licence compliance answerable at all — `{"expires": true}` and
+  `{"maintained": true}` were simply unreachable before, as was `company_id`
+  scoping on anything.
+  An unrecognised key is REJECTED with the valid list, and nothing is sent.
+  Snipe-IT ignores unknown query parameters silently, so passing them through
+  blind would return HTTP 200 with the filter not applied — an unfiltered list
+  that reads as a filtered answer. Booleans are serialised as the literal
+  "true"/"false" the controllers compare against.
+- Custom fields are now documented where a model will actually look. Values are
+  keyed by `db_column_name` (`_snipeit_mac_address_1`), never by display name,
+  and the keys were always discoverable via `fieldsets include=fields` — which
+  also returns `format` (the validation regex), `type`, `required`,
+  `field_encrypted` and `field_values_array`. Nothing was missing but the
+  instructions, so this is a description change, not a feature.
+- Capability entries gain `kind: 'tool' | 'guide'`. A guide documents how to
+  compose existing tools for something the API has no single endpoint for. Two
+  are added:
+    * custom fields, as above;
+    * kits — because the Snipe-IT API has NO kit-checkout endpoint (only the web
+      UI hands out a whole kit). The guide says so and gives the real path: read
+      the kit's models, pick an available asset per model, check out each. That
+      stops a model hunting for an endpoint that does not exist.
+  Guides are asserted not to shadow a tool id and to reference only tools that
+  are actually registered, so a guide cannot rot into a dead end.
+
 ## 0.2.0
 
 Per-user authentication, so a shared multi-user endpoint no longer means a

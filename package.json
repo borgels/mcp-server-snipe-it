@@ -1,6 +1,6 @@
 {
   "name": "mcp-server-snipe-it",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "MCP server for the Snipe-IT asset management API.",
   "type": "module",
   "main": "./dist/stdio.js",

@@ -32,7 +32,24 @@ const limitSchema = z.number().int().min(1).max(MAX_LIMIT).optional().describe('
 const offsetSchema = z.number().int().min(0).optional();
 const orderSchema = z.enum(['asc', 'desc']).optional();
 const entitySchema = z.enum(ENTITY_NAMES).describe('Entity type (assets/hardware have their own tools).');
-const payloadSchema = z.record(z.string(), z.unknown()).describe('Snipe-IT API fields (snake_case).');
+const payloadSchema = z
+  .record(z.string(), z.unknown())
+  .describe(
+    'Snipe-IT API fields (snake_case). Custom-field VALUES go in here too, keyed by the field\'s ' +
+      'db_column_name (e.g. "_snipeit_mac_address_1") — never by its display name. Look the keys up with ' +
+      'snipeit_get_entity entity=fieldsets include=fields (or entity=fields), which returns db_column_name ' +
+      'plus format (the validation regex), type, required, and field_values_array (the allowed options for ' +
+      'a dropdown).',
+  );
+
+const filtersSchema = z
+  .record(z.string(), z.union([z.string(), z.number(), z.boolean()]))
+  .optional()
+  .describe(
+    'Server-side filters as {key: value}, passed to the Snipe-IT index endpoint. Valid keys depend on the ' +
+      'entity; an unknown key is rejected with the valid list rather than silently ignored. Do not put ' +
+      'search/sort/order/limit/offset here — they have their own arguments.',
+  );
 
 export interface RegisterOptions {
   /** Gateway-verified caller (X-MCP-User), when the transport forwards one. */
@@ -241,10 +258,13 @@ export function registerSnipeItTools(
     {
       title: 'List Entities (Snipe-IT)',
       description:
-        'List licenses, accessories, consumables, components, users, locations, statuslabels, categories, manufacturers, models, companies, departments, suppliers, fields, fieldsets, kits, maintenances, depreciations, or groups. Response: {total, rows}.',
+        'List licenses, accessories, consumables, components, users, locations, statuslabels, categories, manufacturers, models, companies, departments, suppliers, fields, fieldsets, kits, maintenances, depreciations, or groups. Response: {total, rows}. ' +
+        'Use `filters` for server-side narrowing instead of paging everything and filtering yourself — e.g. licenses with {"expires":true} for expired licences or {"maintained":true}, anything with {"company_id":3}, users with {"department_id":2} or {"deleted":true}, maintenances with {"asset_id":17} or {"completed":false}. ' +
+        'Valid filter keys differ per entity and an unknown key is rejected with the list of valid ones, so a mistake fails loudly rather than silently returning an unfiltered list.',
       inputSchema: {
         entity: entitySchema,
         search: z.string().trim().min(1).optional(),
+        filters: filtersSchema,
         sort: z.string().trim().optional(),
         order: orderSchema,
         limit: limitSchema,
@@ -261,7 +281,8 @@ export function registerSnipeItTools(
     {
       title: 'Get Entity (Snipe-IT)',
       description:
-        'Fetch one entity by id, or a subresource via include — e.g. licenses include=seats (seat ids for checkin), accessories include=checkedout (pivot-row ids for checkin), components include=assets, users include=assets|accessories|licenses|history.',
+        'Fetch one entity by id, or a subresource via include — e.g. licenses include=seats (seat ids for checkin, and which seats are free), accessories include=checkedout (pivot-row ids for checkin), components include=assets, users include=assets|accessories|licenses|history, kits include=models|licenses|accessories|consumables. ' +
+        'CUSTOM FIELDS: entity=fieldsets include=fields (or entity=fields) is how you discover how to write them — each field returns db_column_name (the exact payload key, e.g. "_snipeit_mac_address_1"), format (validation regex), type, required, field_encrypted, and field_values_array (the allowed values for a dropdown). Use that key in the payload/patch of snipeit_create_asset or snipeit_update_asset; the display name will not work.',
       inputSchema: {
         entity: entitySchema,
         id: z.number().int(),

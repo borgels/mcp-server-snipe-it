@@ -30,6 +30,9 @@ function makeClient(record: { calls: Array<{ url: string; body?: unknown }> }): 
 
 const AUTH_TOOLS = ['snipeit_connect', 'snipeit_status', 'snipeit_disconnect'];
 
+/** Capability ids that name a real tool (guides document workflows instead). */
+const toolCapabilityIds = () => SNIPEIT_CAPABILITIES.filter(c => c.kind !== 'guide').map(c => c.id);
+
 async function listToolNames(server: ReturnType<typeof createServer>): Promise<string[]> {
   const [ct, st] = InMemoryTransport.createLinkedPair();
   const mcp = new Client({ name: 't', version: '0' });
@@ -51,13 +54,37 @@ describe('MCP tool surface', () => {
     // server does not register them. The two must agree — a tool advertised in
     // discovery but absent from the server is a dead end for the model.
     expect(tools.map(t => t.name).sort()).toEqual(
-      SNIPEIT_CAPABILITIES.map(c => c.id)
+      toolCapabilityIds()
         .filter(id => !AUTH_TOOLS.includes(id))
         .sort(),
     );
     for (const tool of tools) {
       const cap = SNIPEIT_CAPABILITIES.find(c => c.id === tool.name);
       expect(tool.annotations?.readOnlyHint).toBe(cap?.risk === 'read');
+    }
+  });
+
+  it('every guide capability documents a workflow, not a phantom tool', async () => {
+    process.env.SNIPEIT_PER_USER_AUTH = 'true';
+    const registered = new Set(await listToolNames(createServer({ client: makeClient({ calls: [] }) })));
+    const guides = SNIPEIT_CAPABILITIES.filter(c => c.kind === 'guide');
+
+    expect(guides.length).toBeGreaterThan(0);
+    for (const guide of guides) {
+      // A guide must NOT shadow a tool id, or a model will try to call it.
+      expect(registered.has(guide.id)).toBe(false);
+
+      // Its steps must name tools that exist, or the guide is a dead end. Read
+      // the `tool` field rather than regexing the serialised examples — a
+      // custom-field key like "_snipeit_mac_address_1" contains "snipeit_" and
+      // is not a tool reference.
+      const steps = guide.examples.filter(
+        (e): e is { tool: string } => typeof e === 'object' && e !== null && 'tool' in e,
+      );
+      expect(steps.length).toBeGreaterThan(0);
+      for (const step of steps) {
+        expect(registered.has(step.tool)).toBe(true);
+      }
     }
   });
 
@@ -75,7 +102,7 @@ describe('MCP tool surface', () => {
     }
     // Nothing else changes shape between the two modes.
     expect(perUser.filter(n => !AUTH_TOOLS.includes(n))).toEqual(shared);
-    expect(perUser.sort()).toEqual(SNIPEIT_CAPABILITIES.map(c => c.id).sort());
+    expect(perUser.sort()).toEqual(toolCapabilityIds().sort());
   });
 });
 
