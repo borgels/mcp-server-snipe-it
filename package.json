@@ -51,9 +51,10 @@
     "zod": "^4.4.3"
   },
   "overrides": {
-    "ip-address": ">=10.1.1",
-    "hono": ">=4.12.25",
-    "fast-uri": ">=3.1.2",
+    "ip-address": ">=10.3.1",
+    "hono": ">=4.12.34",
+    "@hono/node-server": ">=1.19.15 <2",
+    "fast-uri": ">=4.1.2",
     "qs": ">=6.15.2"
   },
   "devDependencies": {
