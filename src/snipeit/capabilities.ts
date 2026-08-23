@@ -1,3 +1,5 @@
+import { perUserAuthEnabled } from './policy.js';
+
 export type CapabilityRisk = 'read' | 'write';
 
 export interface SnipeItCapability {
@@ -27,6 +29,13 @@ export const WRITE_TOOL_ANNOTATIONS = {
 
 const PAGINATION_NOTE = 'Lists return {total, rows}; page with limit/offset until offset >= total (server caps limit at 500).';
 
+/**
+ * Tools that exist only when SNIPEIT_PER_USER_AUTH=true, filtered out of
+ * discovery otherwise so a shared-token instance never advertises an
+ * enrollment flow it does not have.
+ */
+const PER_USER_ONLY = new Set(['snipeit_connect', 'snipeit_status', 'snipeit_disconnect']);
+
 export const SNIPEIT_CAPABILITIES: SnipeItCapability[] = [
   {
     id: 'snipeit_search_capabilities',
@@ -37,6 +46,43 @@ export const SNIPEIT_CAPABILITIES: SnipeItCapability[] = [
     identifierFormats: ['Tool id such as snipeit_list_assets or snipeit_checkout.'],
     safetyNotes: ['Discovery only. Does not call Snipe-IT.'],
     keywords: ['discover', 'help', 'capabilities'],
+  },
+  {
+    id: 'snipeit_connect',
+    title: 'Connect your Snipe-IT account',
+    description:
+      'Link YOUR Snipe-IT account by pasting your own API token into a one-time browser form. After connecting, every ' +
+      'call acts as you, with your own Snipe-IT permissions, and your name appears in Snipe-IT history.',
+    risk: 'write',
+    examples: [{}],
+    identifierFormats: ['No input. Returns a single-use enrollment URL valid for 10 minutes.'],
+    safetyNotes: [
+      'The token never passes through the conversation — it goes from your browser straight to the server.',
+      'Create the token in Snipe-IT under your own profile → Manage API Keys. It is shown only once.',
+    ],
+    keywords: ['connect', 'link', 'auth', 'api token', 'forbind', 'login'],
+  },
+  {
+    id: 'snipeit_status',
+    title: 'Snipe-IT Connection Status',
+    description: 'Whether your Snipe-IT account is linked, and which Snipe-IT user the stored token resolves to.',
+    risk: 'read',
+    examples: [{}],
+    identifierFormats: ['No input.'],
+    safetyNotes: ['Never returns the token itself.'],
+    keywords: ['status', 'connected', 'whoami'],
+  },
+  {
+    id: 'snipeit_disconnect',
+    title: 'Disconnect Snipe-IT',
+    description: 'Remove your stored Snipe-IT API token from this server.',
+    risk: 'write',
+    examples: [{}],
+    identifierFormats: ['No input.'],
+    safetyNotes: [
+      'Does NOT revoke the token in Snipe-IT — revoke it under your profile → Manage API Keys if it may be compromised.',
+    ],
+    keywords: ['disconnect', 'revoke', 'logout', 'unlink'],
   },
   {
     id: 'snipeit_list_assets',
@@ -178,10 +224,13 @@ export const SNIPEIT_CAPABILITIES: SnipeItCapability[] = [
 
 export function searchCapabilities(query: string, limit = 20): SnipeItCapability[] {
   const normalized = query.trim().toLowerCase();
+  const catalogue = perUserAuthEnabled()
+    ? SNIPEIT_CAPABILITIES
+    : SNIPEIT_CAPABILITIES.filter(c => !PER_USER_ONLY.has(c.id));
   if (!normalized) {
-    return SNIPEIT_CAPABILITIES.slice(0, limit);
+    return catalogue.slice(0, limit);
   }
-  return SNIPEIT_CAPABILITIES.map(capability => ({
+  return catalogue.map(capability => ({
     capability,
     score: scoreCapability(capability, normalized),
   }))

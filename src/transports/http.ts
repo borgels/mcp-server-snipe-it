@@ -1,72 +1,25 @@
 import { createServer as createNodeServer } from 'node:http';
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import { createServer as createMcpServer } from '../server.js';
-import {
-  assertAllowedOrigin,
-  assertAuthorized,
-  corsHeaders,
-  getHttpConfig,
-  HttpRequestError,
-  readJsonBody,
-  sendJson,
-} from './http-helpers.js';
+import { SnipeItClient } from '../snipeit/client.js';
+import { CredentialStore } from '../snipeit/store.js';
+import { perUserAuthEnabled } from '../snipeit/policy.js';
+import { getHttpConfig } from './http-helpers.js';
+import { createHttpApp } from './http-app.js';
 
 const config = getHttpConfig();
+const perUser = perUserAuthEnabled();
 
-const httpServer = createNodeServer(async (req, res) => {
-  try {
-    if (req.url !== '/mcp') {
-      sendJson(res, 404, { error: 'Not found' }, req);
-      return;
-    }
+// Built once at boot: the store reads its file and the client validates
+// SNIPEIT_BASE_URL, so a misconfiguration fails here rather than on someone's
+// first question. Only constructed in per-user mode — CredentialStore demands
+// SNIPEIT_ENCRYPTION_KEY, which a shared-token deployment has no use for.
+const store = perUser ? new CredentialStore() : undefined;
+const enrollClient = perUser ? new SnipeItClient() : undefined;
 
-    assertAllowedOrigin(req);
-
-    if (req.method === 'OPTIONS') {
-      res.writeHead(204, corsHeaders(req));
-      res.end();
-      return;
-    }
-
-    if (req.method !== 'POST') {
-      sendJson(res, 405, { error: 'Method not allowed' }, req, { Allow: 'POST' });
-      return;
-    }
-
-    assertAuthorized(req, config);
-    const body = await readJsonBody(req, config.maxBodyBytes);
-    const mcpServer = createMcpServer();
-    const transport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: undefined,
-    });
-
-    await mcpServer.connect(transport);
-    await transport.handleRequest(req, res, body);
-
-    res.on('close', () => {
-      void transport.close();
-      void mcpServer.close();
-    });
-  } catch (error) {
-    console.error(error);
-    if (!res.headersSent) {
-      if (error instanceof HttpRequestError) {
-        sendJson(res, error.status, { error: error.message }, req);
-        return;
-      }
-
-      sendJson(res, 500, {
-        jsonrpc: '2.0',
-        error: {
-          code: -32603,
-          message: 'Internal server error',
-        },
-        id: null,
-      }, req);
-    }
-  }
-});
+const httpServer = createNodeServer(createHttpApp({ config, perUser, store, enrollClient }));
 
 httpServer.listen(config.port, config.host, () => {
-  console.error(`Snipe-IT MCP HTTP server listening on http://${config.host}:${config.port}/mcp`);
+  console.error(
+    `Snipe-IT MCP HTTP server listening on http://${config.host}:${config.port}/mcp` +
+      (perUser ? ' (+ /snipeit/enroll, per-user auth)' : ' (shared token)'),
+  );
 });

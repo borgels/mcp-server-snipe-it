@@ -28,19 +28,54 @@ function makeClient(record: { calls: Array<{ url: string; body?: unknown }> }): 
   return new SnipeItClient({ apiToken: 't', baseUrl: 'https://assets.example.com', fetchImpl });
 }
 
+const AUTH_TOOLS = ['snipeit_connect', 'snipeit_status', 'snipeit_disconnect'];
+
+async function listToolNames(server: ReturnType<typeof createServer>): Promise<string[]> {
+  const [ct, st] = InMemoryTransport.createLinkedPair();
+  const mcp = new Client({ name: 't', version: '0' });
+  await Promise.all([server.connect(st), mcp.connect(ct)]);
+  const { tools } = await mcp.listTools();
+  return tools.map(t => t.name).sort();
+}
+
 describe('MCP tool surface', () => {
   it('registers every capability as a tool with matching annotations', async () => {
+    delete process.env.SNIPEIT_PER_USER_AUTH;
     const server = createServer({ client: makeClient({ calls: [] }) });
     const [ct, st] = InMemoryTransport.createLinkedPair();
     const mcp = new Client({ name: 't', version: '0' });
     await Promise.all([server.connect(st), mcp.connect(ct)]);
 
     const { tools } = await mcp.listTools();
-    expect(tools.map(t => t.name).sort()).toEqual(SNIPEIT_CAPABILITIES.map(c => c.id).sort());
+    // Shared-token mode: the catalogue hides the per-user auth tools, and the
+    // server does not register them. The two must agree — a tool advertised in
+    // discovery but absent from the server is a dead end for the model.
+    expect(tools.map(t => t.name).sort()).toEqual(
+      SNIPEIT_CAPABILITIES.map(c => c.id)
+        .filter(id => !AUTH_TOOLS.includes(id))
+        .sort(),
+    );
     for (const tool of tools) {
       const cap = SNIPEIT_CAPABILITIES.find(c => c.id === tool.name);
       expect(tool.annotations?.readOnlyHint).toBe(cap?.risk === 'read');
     }
+  });
+
+  it('adds exactly the auth tools in per-user mode, and only there', async () => {
+    delete process.env.SNIPEIT_PER_USER_AUTH;
+    const shared = await listToolNames(createServer({ client: makeClient({ calls: [] }) }));
+    for (const name of AUTH_TOOLS) {
+      expect(shared).not.toContain(name);
+    }
+
+    process.env.SNIPEIT_PER_USER_AUTH = 'true';
+    const perUser = await listToolNames(createServer({ client: makeClient({ calls: [] }) }));
+    for (const name of AUTH_TOOLS) {
+      expect(perUser).toContain(name);
+    }
+    // Nothing else changes shape between the two modes.
+    expect(perUser.filter(n => !AUTH_TOOLS.includes(n))).toEqual(shared);
+    expect(perUser.sort()).toEqual(SNIPEIT_CAPABILITIES.map(c => c.id).sort());
   });
 });
 
