@@ -9,6 +9,14 @@ export interface SnipeItClientOptions {
 
 export type QueryValue = string | number | boolean | null | undefined;
 
+/** Subset of GET /users/me used to identify the owner of a token. */
+export interface SnipeItIdentity {
+  id?: number;
+  username?: string;
+  name?: string;
+  email?: string;
+}
+
 /**
  * Client for the Snipe-IT REST API v1.
  *
@@ -34,6 +42,29 @@ export class SnipeItClient {
     this.baseUrl = root.endsWith('/api/v1') ? root : `${root}/api/v1`;
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.timeoutMs = options.timeoutMs ?? Number(process.env.SNIPEIT_TIMEOUT_MS ?? 30_000);
+  }
+
+  /** A copy of this client bound to a different token — one per calling user. */
+  withToken(apiToken: string): SnipeItClient {
+    return new SnipeItClient({
+      apiToken,
+      baseUrl: this.baseUrl,
+      fetchImpl: this.fetchImpl,
+      timeoutMs: this.timeoutMs,
+    });
+  }
+
+  /**
+   * Resolve who a token belongs to, via GET /users/me.
+   *
+   * Used at enrollment so a bad or revoked token is rejected on the spot rather
+   * than surfacing later as a confusing 401 on the user's first real question,
+   * and so the form can confirm WHICH Snipe-IT account was linked — someone
+   * holding several tokens needs to see they pasted the right one.
+   */
+  async verifyToken(apiToken: string): Promise<SnipeItIdentity> {
+    const body = await this.withToken(apiToken).get<SnipeItIdentity | null>('/users/me');
+    return body ?? {};
   }
 
   async get<T>(path: string, query?: Record<string, QueryValue>): Promise<T> {

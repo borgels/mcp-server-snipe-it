@@ -10,6 +10,13 @@ export interface SnipeItAuditEvent {
   status?: string;
   reason?: string;
   error?: unknown;
+  /**
+   * Gateway-verified caller (X-MCP-User). Recorded in the clear: an audit trail
+   * that cannot name the actor is not an audit trail, and this is the only place
+   * attribution exists when the connector runs on a shared token — Snipe-IT's
+   * own action log then credits every change to the token's owner instead.
+   */
+  user?: string;
 }
 
 export async function writeAuditEvent(event: SnipeItAuditEvent): Promise<void> {
@@ -23,6 +30,7 @@ export async function writeAuditEvent(event: SnipeItAuditEvent): Promise<void> {
     requestId: event.requestId ?? randomUUID(),
     tool: event.tool,
     action: event.action,
+    user: event.user,
     targetHash: event.target === undefined ? undefined : hashValue(JSON.stringify(event.target)),
     status: event.status,
     reason: event.reason,
