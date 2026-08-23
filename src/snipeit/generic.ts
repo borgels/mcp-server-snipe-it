@@ -10,6 +10,7 @@ export interface ListEntitiesInput {
   offset?: number;
   sort?: string;
   order?: 'asc' | 'desc';
+  filters?: Record<string, string | number | boolean>;
 }
 
 export async function listEntities(client: SnipeItClient, input: ListEntitiesInput): Promise<unknown> {
@@ -21,6 +22,27 @@ export async function listEntities(client: SnipeItClient, input: ListEntitiesInp
     sort: input.sort,
     order: input.order,
   };
+
+  for (const [key, value] of Object.entries(input.filters ?? {})) {
+    if (!definition.filters.includes(key)) {
+      // Loud rather than silent: Snipe-IT would return 200 and ignore the
+      // unknown parameter, so an unfiltered list would come back looking like a
+      // filtered answer.
+      throw new Error(
+        `Entity ${input.entity} has no filter "${key}". Valid filters: ` +
+          `${definition.filters.join(', ') || '(none — use search)'}`,
+      );
+    }
+    if (key in query) {
+      throw new Error(`Filter "${key}" collides with a dedicated argument; pass it as ${key} instead of in filters.`);
+    }
+    // Snipe-IT reads these as request input, where the string "false" is truthy.
+    // Booleans must therefore go over the wire as "true"/"false" literals only
+    // where the controller compares against them (expires, maintained, deleted,
+    // completed…), which String() gives us for free.
+    query[key] = typeof value === 'boolean' ? String(value) : value;
+  }
+
   return client.get(definition.path, query);
 }
 

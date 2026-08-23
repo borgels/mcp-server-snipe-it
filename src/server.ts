@@ -17,7 +17,7 @@ export interface CreateServerOptions {
 export function createServer(options: CreateServerOptions = {}): McpServer {
   const server = new McpServer({
     name: 'snipe-it',
-    version: '0.2.0',
+    version: '0.3.0',
   });
 
   // In per-user mode this client carries no usable credential of its own — it
