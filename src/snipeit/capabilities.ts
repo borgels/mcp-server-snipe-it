@@ -118,7 +118,7 @@ export const SNIPEIT_CAPABILITIES: SnipeItCapability[] = [
     description:
       'Fetch one asset by id, asset tag, or serial number. include can fetch its licenses, full history, or assigned child assets/accessories/components.',
     risk: 'read',
-    examples: [{ assetTag: 'BOS-0042' }, { id: 17, include: 'history' }],
+    examples: [{ assetTag: 'ASSET-0042' }, { id: 17, include: 'history' }],
     identifierFormats: ['id (number)', 'assetTag (string)', 'serial (string)'],
     safetyNotes: [],
     keywords: ['asset', 'tag', 'serial', 'history', 'details'],
@@ -218,7 +218,7 @@ export const SNIPEIT_CAPABILITIES: SnipeItCapability[] = [
     title: 'Create Asset (Snipe-IT)',
     description: 'Create a hardware asset. Requires at minimum model_id and status_id; asset_tag unless auto-increment is on.',
     risk: 'write',
-    examples: [{ payload: { model_id: 3, status_id: 2, asset_tag: 'BOS-0100', serial: 'C02XX' } }],
+    examples: [{ payload: { model_id: 3, status_id: 2, asset_tag: 'ASSET-0100', serial: 'C02XX' } }],
     identifierFormats: ['payload uses Snipe-IT API field names (snake_case)'],
     safetyNotes: ['Requires SNIPEIT_ENABLE_WRITES=true.'],
     keywords: ['create', 'opret', 'asset', 'new hardware', 'registrer'],
