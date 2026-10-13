@@ -1,5 +1,6 @@
 import type { SnipeItClient, QueryValue } from './client.js';
 import { assertWritesEnabled } from './policy.js';
+import { safePathSegment } from './path.js';
 
 export const MAX_LIMIT = 500;
 
@@ -60,10 +61,10 @@ export interface GetAssetInput {
 
 export async function getAsset(client: SnipeItClient, input: GetAssetInput): Promise<unknown> {
   if (input.assetTag) {
-    return client.get(`/hardware/bytag/${encodeURIComponent(input.assetTag)}`);
+    return client.get(`/hardware/bytag/${safePathSegment(input.assetTag, 'assetTag')}`);
   }
   if (input.serial) {
-    return client.get(`/hardware/byserial/${encodeURIComponent(input.serial)}`);
+    return client.get(`/hardware/byserial/${safePathSegment(input.serial, 'serial')}`);
   }
   if (input.id === undefined) {
     throw new Error('Provide id, assetTag, or serial.');

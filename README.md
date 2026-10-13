@@ -85,6 +85,7 @@ permissions and records their name in its history.
 ```env
 SNIPEIT_PER_USER_AUTH=true
 SNIPEIT_TRUST_FORWARDED_USER=true
+MCP_HTTP_TOKEN=<shared secret the gateway sends as Bearer>
 SNIPEIT_ENCRYPTION_KEY=<min 16 chars>
 SNIPEIT_STORE_PATH=/data/store.json
 SNIPEIT_PUBLIC_BASE_URL=https://snipe-it.example.com
@@ -96,7 +97,9 @@ The flow:
 
 1. The user calls `snipeit_connect` and gets a **single-use link, valid 10
    minutes**, bound to their identity.
-2. They open it and paste a token they created in Snipe-IT under their own
+2. They open it — the page shows **"Linking for <identity>"**, the gateway
+   identity the link is bound to — tick a box confirming that identity is
+   theirs, and paste a token they created in Snipe-IT under their own
    profile → **Manage API Keys**. The token goes from their browser straight to
    the server, so it never enters the conversation transcript — a Snipe-IT token
    is bearer-equivalent to the whole account and would otherwise sit in history
@@ -113,6 +116,11 @@ Requirements and sharp edges:
   controls. Only enable it behind a gateway that sets the header from a
   validated token *and* strips any client-supplied copy — otherwise a caller
   can name any identity and read that person's data.
+- **`MCP_HTTP_TOKEN` is required with forwarded-user trust.** The HTTP server
+  refuses to start when `SNIPEIT_TRUST_FORWARDED_USER=true` and
+  `MCP_HTTP_TOKEN` is empty, since without a shared bearer anything that can
+  reach the port could assert an identity. The bearer is compared in constant
+  time.
 - **No fallback.** An un-enrolled user gets `NOT_CONNECTED`, never the shared
   token, even if `SNIPEIT_API_TOKEN` happens to be set. A fallback would hand
   them borrowed rights, which is the failure this mode exists to remove.

@@ -119,11 +119,12 @@ async function handleEnroll(
 ): Promise<void> {
   if (req.method === 'GET') {
     const state = url.searchParams.get('state') ?? '';
-    if (!store.peekState(state)) {
+    const owner = store.peekState(state);
+    if (!owner) {
       html(res, 400, page('Link expired', EXPIRED, false));
       return;
     }
-    html(res, 200, page('Connect Snipe-IT', form(state)));
+    html(res, 200, page('Connect Snipe-IT', form(state, owner)));
     return;
   }
 
@@ -136,6 +137,7 @@ async function handleEnroll(
   const fields = new URLSearchParams(raw);
   const state = fields.get('state') ?? '';
   const apiToken = (fields.get('apiToken') ?? '').trim();
+  const confirmed = fields.get('confirmIdentity') === 'yes';
   const user = store.peekState(state);
 
   if (!user) {
@@ -145,7 +147,18 @@ async function handleEnroll(
   if (!apiToken) {
     // Deliberately does NOT consume the state — a blank submission is a slip,
     // not an attack, and burning the link here would force a new one.
-    html(res, 400, page('Connect Snipe-IT', form(state, 'Please paste your API token.')));
+    html(res, 400, page('Connect Snipe-IT', form(state, user, 'Please paste your API token.')));
+    return;
+  }
+  if (!confirmed) {
+    // Like a blank token, a missing confirmation leaves the link usable. The
+    // token is never stored until the person has explicitly confirmed which
+    // gateway identity it will be bound to.
+    html(
+      res,
+      400,
+      page('Connect Snipe-IT', form(state, user, 'Please confirm the identity this token will be linked to.')),
+    );
     return;
   }
 
@@ -175,17 +188,22 @@ async function handleEnroll(
       error instanceof Error && /\b401\b/.test(error.message)
         ? 'Snipe-IT rejected that token. Check you copied it in full, and that it has not been revoked under your profile → Manage API Keys.'
         : 'Could not verify the token with Snipe-IT. Please try again.';
-    html(res, 400, page('Connect Snipe-IT', form(state, message)));
+    html(res, 400, page('Connect Snipe-IT', form(state, user, message)));
   }
 }
 
-function form(state: string, error = ''): string {
+function form(state: string, owner: string, error = ''): string {
   const err = error ? `<p class="err">${escapeHtml(error)}</p>` : '';
-  return `${err}<form method="post">
+  const who = escapeHtml(owner);
+  return `<p class="who">Linking for <strong>${who}</strong></p>
+  <p>The token you paste will be bound to this signed-in identity. If that is not you, close this page and do not continue.</p>
+  ${err}<form method="post">
     <input type="hidden" name="state" value="${escapeHtml(state)}">
     <label for="apiToken">Snipe-IT API token</label>
     <textarea id="apiToken" name="apiToken" rows="4" autocomplete="off" spellcheck="false" required
               placeholder="paste your token here"></textarea>
+    <label class="check"><input type="checkbox" name="confirmIdentity" value="yes" required>
+      I confirm this is my Snipe-IT token and that I am <strong>${who}</strong>.</label>
     <button type="submit">Connect</button>
   </form>
   <p class="hint">Create a token in Snipe-IT under your own profile &rarr; <strong>Manage API Keys</strong> &rarr;
@@ -201,6 +219,8 @@ function page(title: string, body: string, ok = true): string {
  h1{font-size:1.3rem} label{display:block;margin:1rem 0 .35rem;font-weight:600}
  textarea{width:100%;padding:.6rem;font-size:.95rem;font-family:ui-monospace,monospace;border:1px solid #bbb;border-radius:6px;box-sizing:border-box;resize:vertical}
  button{margin-top:1rem;padding:.6rem 1.2rem;font-size:1rem;border:0;border-radius:6px;background:#111;color:#fff;cursor:pointer}
+ .who{font-size:1.1rem;padding:.6rem .8rem;border:1px solid #bbb;border-radius:6px}
+ label.check{font-weight:400;display:flex;gap:.5rem;align-items:flex-start}
  .err{color:#b00020;font-weight:600} .hint{color:#555;font-size:.9rem;margin-top:1.5rem}
  @media (prefers-color-scheme:dark){
    body{background:#111;color:#eee} textarea{background:#1c1c1c;color:#eee;border-color:#444}

@@ -1,3 +1,4 @@
+import { createHash, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
 export class HttpRequestError extends Error {
@@ -31,8 +32,37 @@ export function assertAuthorized(req: IncomingMessage, config = getHttpConfig())
     return;
   }
 
-  if (req.headers.authorization !== `Bearer ${config.httpToken}`) {
+  if (!bearerMatches(req.headers.authorization, config.httpToken)) {
     throw new HttpRequestError(401, 'Unauthorized');
+  }
+}
+
+/**
+ * Constant-time bearer comparison. Both sides are hashed first so the
+ * comparison runs over equal-length buffers regardless of input length.
+ */
+export function bearerMatches(header: string | undefined, token: string): boolean {
+  const presented = typeof header === 'string' && header.startsWith('Bearer ') ? header.slice('Bearer '.length) : '';
+  const a = createHash('sha256').update(presented, 'utf8').digest();
+  const b = createHash('sha256').update(token, 'utf8').digest();
+  return timingSafeEqual(a, b) && presented.length > 0;
+}
+
+/** Env vars that make this server trust a gateway-supplied identity header. */
+export const TRUST_FORWARDED_USER_VARS = ['SNIPEIT_TRUST_FORWARDED_USER'] as const;
+
+/**
+ * Refuse to start an HTTP server that trusts X-MCP-User without a shared
+ * bearer: otherwise any client able to reach the port could assert any identity.
+ */
+export function assertSafeHttpStartup(env: NodeJS.ProcessEnv = process.env): void {
+  const trusting = TRUST_FORWARDED_USER_VARS.filter(name => env[name] === 'true');
+  if (trusting.length && !env.MCP_HTTP_TOKEN) {
+    throw new Error(
+      `${trusting.join(', ')}=true requires MCP_HTTP_TOKEN to be set: without a shared bearer between the ` +
+        'gateway and this server, any client that can reach the port could assert any X-MCP-User identity. ' +
+        'Set MCP_HTTP_TOKEN (and configure the gateway to send it), or disable forwarded-user trust.',
+    );
   }
 }
 
