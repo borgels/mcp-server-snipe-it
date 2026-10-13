@@ -99,7 +99,7 @@ describe('/snipeit/enroll', () => {
     const { base, store } = await boot({ verify: () => ({ id: 42, username: 'anna' }) });
     const state = store.createState('anna@example.com');
 
-    const res = await post(base, { state, apiToken: 'anna-real-token' });
+    const res = await post(base, { state, apiToken: 'anna-real-token', confirmIdentity: 'yes' });
     expect(res.status).toBe(200);
     const body = await res.text();
     expect(body).toContain('Linked');
@@ -117,7 +117,7 @@ describe('/snipeit/enroll', () => {
     const state = store.createState('anna@example.com');
     // A submission naming a different user must not be honoured — identity
     // comes from the state, never from the form.
-    await post(base, { state, apiToken: 'anna-real-token', user: 'bo@example.com' });
+    await post(base, { state, apiToken: 'anna-real-token', confirmIdentity: 'yes', user: 'bo@example.com' });
     expect(store.get('anna@example.com')?.apiToken).toBe('anna-real-token');
     expect(store.get('bo@example.com')).toBeUndefined();
   });
@@ -148,11 +148,32 @@ describe('/snipeit/enroll', () => {
     const { base, store } = await boot({ verify: () => new Error('401') });
     const state = store.createState('anna@example.com');
 
-    const res = await post(base, { state, apiToken: 'revoked-token' });
+    const res = await post(base, { state, apiToken: 'revoked-token', confirmIdentity: 'yes' });
     expect(res.status).toBe(400);
     expect(await res.text()).toMatch(/rejected that token/);
     expect(store.get('anna@example.com')).toBeUndefined();
     // Still recoverable without a new link.
+    expect(store.peekState(state)).toBe('anna@example.com');
+  });
+
+  it('shows which gateway identity the link is bound to, HTML-escaped', async () => {
+    const { base, store } = await boot();
+    const state = store.createState('<b>eve</b>@example.com');
+    const body = await (await fetch(`${base}/snipeit/enroll?state=${state}`)).text();
+    expect(body).toContain('Linking for <strong>&lt;b&gt;eve&lt;/b&gt;@example.com</strong>');
+    expect(body).not.toContain('<b>eve</b>');
+    expect(body).toMatch(/type="checkbox" name="confirmIdentity"[^>]*required/);
+  });
+
+  it('refuses to store a token without the identity confirmation, keeping the link usable', async () => {
+    const { base, store } = await boot();
+    const state = store.createState('anna@example.com');
+    const res = await post(base, { state, apiToken: 'anna-real-token' });
+    expect(res.status).toBe(400);
+    const body = await res.text();
+    expect(body).toContain('confirm the identity');
+    expect(body).toContain('Linking for <strong>anna@example.com</strong>');
+    expect(store.get('anna@example.com')).toBeUndefined();
     expect(store.peekState(state)).toBe('anna@example.com');
   });
 
