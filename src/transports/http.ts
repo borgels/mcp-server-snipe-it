@@ -2,8 +2,15 @@ import { createServer as createNodeServer } from 'node:http';
 import { SnipeItClient } from '../snipeit/client.js';
 import { CredentialStore } from '../snipeit/store.js';
 import { perUserAuthEnabled } from '../snipeit/policy.js';
-import { getHttpConfig } from './http-helpers.js';
+import { assertSafeHttpStartup, getHttpConfig } from './http-helpers.js';
 import { createHttpApp } from './http-app.js';
+
+try {
+  assertSafeHttpStartup();
+} catch (error) {
+  console.error(error instanceof Error ? error.message : error);
+  process.exit(1);
+}
 
 const config = getHttpConfig();
 const perUser = perUserAuthEnabled();
