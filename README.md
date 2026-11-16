@@ -156,7 +156,7 @@ See `.env.example` for the full list. `SNIPEIT_TIMEOUT_MS` must be a plain integ
 | `MCP_AUTH_FAILURE_LIMIT` | `20` | Failed authentication attempts per client address and window before further failures get 429; `0` disables. Valid tokens are never throttled. |
 | `MCP_AUTH_FAILURE_WINDOW_MS` | `60000` | Window for the limit above. |
 
-`GET /healthz` answers `{"status":"ok"}` without authentication. 401 responses carry
+`GET /healthz` answers `{"ok":true,"perUserAuth":<true|false>}` without authentication. 401 responses carry
 `WWW-Authenticate: Bearer`; invalid JSON gets 400. The server shuts down gracefully on SIGTERM/SIGINT.
 
 `/healthz` and `/snipeit/enroll` are served without the bearer token, exactly as before (the enrollment page is reached by a browser and protected by its single-use state token). The `Host` check applies to `/mcp` only. `SNIPEIT_TRUST_FORWARDED_USER=true` always requires `MCP_HTTP_TOKEN`, also with `MCP_HTTP_ALLOW_UNAUTHENTICATED=true`.
