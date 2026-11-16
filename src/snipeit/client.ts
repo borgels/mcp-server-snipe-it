@@ -1,4 +1,9 @@
-import { SnipeItHttpError } from '../errors.js';
+import { ConfigError, readEnvInteger } from '../config-env.js';
+import { describeUrl, registerSecret, SnipeItHttpError } from '../errors.js';
+
+/** Error responses are read up to this many bytes. */
+const MAX_ERROR_BODY_BYTES = 64 * 1024;
+const MAX_TIMEOUT_MS = 10 * 60 * 1000;
 
 export interface SnipeItClientOptions {
   apiToken?: string;
@@ -34,6 +39,7 @@ export class SnipeItClient {
 
   constructor(options: SnipeItClientOptions = {}) {
     this.apiToken = options.apiToken ?? process.env.SNIPEIT_API_TOKEN;
+    registerSecret(this.apiToken);
     const root = trimTrailingSlash(options.baseUrl ?? process.env.SNIPEIT_BASE_URL ?? '');
     if (!root) {
       throw new Error('Missing SNIPEIT_BASE_URL (e.g. https://assets.example.com).');
@@ -41,7 +47,10 @@ export class SnipeItClient {
     assertSafeBaseUrl(root);
     this.baseUrl = root.endsWith('/api/v1') ? root : `${root}/api/v1`;
     this.fetchImpl = options.fetchImpl ?? fetch;
-    this.timeoutMs = options.timeoutMs ?? Number(process.env.SNIPEIT_TIMEOUT_MS ?? 30_000);
+    this.timeoutMs = options.timeoutMs ?? readEnvInteger('SNIPEIT_TIMEOUT_MS', 30_000, { max: MAX_TIMEOUT_MS });
+    if (!Number.isSafeInteger(this.timeoutMs) || this.timeoutMs < 1) {
+      throw new ConfigError('timeoutMs must be a positive integer.');
+    }
   }
 
   /** A copy of this client bound to a different token — one per calling user. */
@@ -110,6 +119,9 @@ export class SnipeItClient {
     const init: RequestInit = {
       method,
       headers,
+      // Never follow redirects: the token belongs to SNIPEIT_BASE_URL only,
+      // and a 307/308 would also replay the request body elsewhere.
+      redirect: 'manual',
       signal: AbortSignal.timeout(this.timeoutMs),
     };
 
@@ -119,9 +131,17 @@ export class SnipeItClient {
     }
 
     const response = await this.fetchImpl(url, init);
-    const responseBody = await readResponseBody(response);
+
+    if (response.type === 'opaqueredirect' || (response.status >= 300 && response.status < 400)) {
+      void response.body?.cancel().catch(() => undefined);
+      throw new Error(
+        `Snipe-IT API responded with a redirect (HTTP ${response.status}) for ${method} ${describeUrl(url)}; ` +
+          'redirects are not followed. Check that SNIPEIT_BASE_URL is the final https:// address.',
+      );
+    }
 
     if (!response.ok) {
+      const responseBody = await readErrorBody(response);
       throw new SnipeItHttpError({
         status: response.status,
         url,
@@ -131,6 +151,7 @@ export class SnipeItClient {
       });
     }
 
+    const responseBody = await readResponseBody(response);
     // HTTP 200 does not mean success in Snipe-IT — check the envelope.
     if (isErrorEnvelope(responseBody)) {
       throw new SnipeItHttpError({
@@ -169,6 +190,56 @@ export function formatMessages(messages: unknown): string {
       .join(' | ');
   }
   return String(messages ?? 'unknown error');
+}
+
+/** Read at most `limit` bytes of the body; cancels the rest and reports whether it was longer. */
+async function readUpTo(response: Response, limit: number): Promise<{ bytes: Uint8Array; exceeded: boolean }> {
+  if (!response.body) {
+    return { bytes: new Uint8Array(0), exceeded: false };
+  }
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  let exceeded = false;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+    if (total + value.byteLength > limit) {
+      chunks.push(value.subarray(0, limit - total));
+      total = limit;
+      exceeded = true;
+      await reader.cancel().catch(() => undefined);
+      break;
+    }
+    chunks.push(value);
+    total += value.byteLength;
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return { bytes, exceeded };
+}
+
+/** Error bodies are read up to a small limit; JSON is parsed only when complete. */
+async function readErrorBody(response: Response): Promise<unknown> {
+  const { bytes, exceeded } = await readUpTo(response, MAX_ERROR_BODY_BYTES);
+  const text = new TextDecoder().decode(bytes);
+  if (!text) {
+    return null;
+  }
+  if (exceeded) {
+    return text;
+  }
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return text;
+  }
 }
 
 async function readResponseBody(response: Response): Promise<unknown> {
