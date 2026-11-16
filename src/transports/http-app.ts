@@ -1,13 +1,18 @@
 import type { IncomingMessage, RequestListener, ServerResponse } from 'node:http';
+import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { createServer as createMcpServer } from '../server.js';
 import type { SnipeItClient } from '../snipeit/client.js';
 import type { CredentialStore } from '../snipeit/store.js';
 import { trustForwardedUser } from '../snipeit/policy.js';
 import {
+  assertAllowedHost,
   assertAllowedOrigin,
   assertAuthorized,
+  AuthFailureLimiter,
   corsHeaders,
+  DEFAULT_AUTH_FAILURE_LIMIT,
+  DEFAULT_AUTH_FAILURE_WINDOW_MS,
   type HttpConfig,
   HttpRequestError,
   readJsonBody,
@@ -21,6 +26,10 @@ export interface HttpAppOptions {
   store?: CredentialStore;
   /** Client used only to validate a pasted token at enrollment. */
   enrollClient?: SnipeItClient;
+  /** Factory for the per-request MCP server (tests inject a fake client). */
+  createMcpServer?: (options: Parameters<typeof createMcpServer>[0]) => McpServer;
+  /** Defaults to console.error. */
+  log?: (line: string) => void;
 }
 
 /**
@@ -32,14 +41,23 @@ export interface HttpAppOptions {
  */
 export function createHttpApp(options: HttpAppOptions): RequestListener {
   const { config, perUser, store, enrollClient } = options;
+  const buildMcpServer = options.createMcpServer ?? createMcpServer;
+  const log = options.log ?? ((line: string) => console.error(line));
+  const failureLimit = config.authFailureLimit ?? DEFAULT_AUTH_FAILURE_LIMIT;
+  const limiter = failureLimit > 0
+    ? new AuthFailureLimiter(failureLimit, config.authFailureWindowMs ?? DEFAULT_AUTH_FAILURE_WINDOW_MS)
+    : undefined;
 
   return async (req, res) => {
+    const remote = req.socket.remoteAddress ?? 'unknown';
+    // Query strings are not logged: the enrollment state token travels there.
+    const describeRequest = () => `${req.method ?? '-'} ${(req.url ?? '').split('?')[0]?.slice(0, 200)} from ${remote}`;
     try {
       const url = new URL(req.url ?? '/', 'http://localhost');
 
-      // Enrollment form — reached DIRECTLY by the user's browser (the reverse
-      // proxy routes /snipeit/* to this container, bypassing the MCP gateway),
-      // so it cannot require the gateway bearer. Its security is the
+      // Enrollment form, reached directly by the user's browser (a reverse
+      // proxy routes /snipeit/* to this server, not through the MCP
+      // endpoint), so it cannot require the bearer token. Its security is the
       // single-use, user-bound state token minted by snipeit_connect.
       if (url.pathname === '/snipeit/enroll') {
         if (!perUser || !store || !enrollClient) {
@@ -56,52 +74,83 @@ export function createHttpApp(options: HttpAppOptions): RequestListener {
       }
 
       if (url.pathname !== '/mcp') {
-        sendJson(res, 404, { error: 'Not found' }, req);
-        return;
+        throw new HttpRequestError(404, 'Not found');
       }
 
-      assertAllowedOrigin(req);
+      assertAllowedHost(req, config);
+      assertAllowedOrigin(req, config);
 
       if (req.method === 'OPTIONS') {
-        res.writeHead(204, corsHeaders(req));
+        res.writeHead(204, corsHeaders(req, config));
         res.end();
         return;
       }
 
       if (req.method !== 'POST') {
-        sendJson(res, 405, { error: 'Method not allowed' }, req, { Allow: 'POST' });
-        return;
+        throw new HttpRequestError(405, 'Method not allowed', { headers: { Allow: 'POST, OPTIONS' } });
       }
 
-      assertAuthorized(req, config);
+      try {
+        assertAuthorized(req, config);
+      } catch (error) {
+        // Only failing requests are counted and throttled; a valid token is never blocked.
+        if (limiter) {
+          const retryAfter = limiter.retryAfterSeconds(remote);
+          if (retryAfter > 0) {
+            sendJson(res, 429, { error: 'Too many failed authentication attempts' }, req, {
+              'Retry-After': String(retryAfter),
+            }, config);
+            return;
+          }
+          if (limiter.recordFailure(remote)) {
+            log(`[http] ${remote} reached ${failureLimit} failed authentication attempts; further failures get 429`);
+          }
+        }
+        throw error;
+      }
+
       const body = await readJsonBody(req, config.maxBodyBytes);
 
-      // Identity is only ever taken from the gateway-set header, never from
-      // anything the MCP client can choose, and only when explicitly trusted.
+      // Identity is only ever taken from the header set by the authenticating
+      // proxy, never from anything the MCP client can choose, and only when
+      // explicitly trusted.
       const forwardedUser = trustForwardedUser() ? firstHeader(req.headers['x-mcp-user']) : undefined;
 
-      const mcpServer = createMcpServer({ store, onBehalfOf: forwardedUser });
+      const mcpServer = buildMcpServer({ store, onBehalfOf: forwardedUser });
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
-
-      await mcpServer.connect(transport);
-      await transport.handleRequest(req, res, body);
 
       res.on('close', () => {
         void transport.close();
         void mcpServer.close();
       });
+
+      for (const [name, value] of Object.entries(corsHeaders(req, config))) {
+        res.setHeader(name, value);
+      }
+
+      await mcpServer.connect(transport);
+      await transport.handleRequest(req, res, body);
     } catch (error) {
-      console.error(error);
-      if (!res.headersSent) {
-        if (error instanceof HttpRequestError) {
-          sendJson(res, error.status, { error: error.message }, req);
-          return;
+      if (error instanceof HttpRequestError) {
+        log(`[http] ${error.status} ${describeRequest()}: ${error.message}`);
+        if (!res.headersSent && !res.destroyed) {
+          const payload = error.jsonRpcCode === undefined
+            ? { error: error.message }
+            : { jsonrpc: '2.0', error: { code: error.jsonRpcCode, message: error.message }, id: null };
+          sendJson(res, error.status, payload, req, error.headers, config);
         }
+        return;
+      }
+
+      log(`[http] 500 ${describeRequest()}: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`);
+      if (!res.headersSent && !res.destroyed) {
         sendJson(
           res,
           500,
           { jsonrpc: '2.0', error: { code: -32603, message: 'Internal server error' }, id: null },
           req,
+          {},
+          config,
         );
       }
     }
@@ -236,15 +285,25 @@ function html(res: ServerResponse, status: number, body: string): void {
 }
 
 async function readRawBody(req: IncomingMessage): Promise<string> {
+  const maxBytes = 64 * 1024;
+  const declared = Number(req.headers['content-length']);
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    throw new HttpRequestError(413, 'Payload too large');
+  }
   const chunks: Buffer[] = [];
   let total = 0;
-  for await (const chunk of req) {
-    const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    total += buf.byteLength;
-    if (total > 64 * 1024) {
-      throw new HttpRequestError(413, 'Payload too large');
+  try {
+    for await (const chunk of req) {
+      const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      total += buf.byteLength;
+      if (total > maxBytes) {
+        throw new HttpRequestError(413, 'Payload too large');
+      }
+      chunks.push(buf);
     }
-    chunks.push(buf);
+  } catch (error) {
+    if (error instanceof HttpRequestError) throw error;
+    throw new HttpRequestError(400, 'Request body could not be read (connection aborted)');
   }
   return Buffer.concat(chunks).toString('utf8');
 }

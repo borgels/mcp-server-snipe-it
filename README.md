@@ -2,6 +2,8 @@
 
 MCP server for the [Snipe-IT](https://snipe-it.readme.io/reference/api-overview) asset management REST API (v1, tested against Snipe-IT v8.6.x).
 
+This is an independent, unofficial project. It is not developed, endorsed or supported by Snipe-IT.
+
 ## Tools
 
 **Read (always on):** `snipeit_list_assets` (search, meta-status, model/category/location filters, audit/checkin due-lists), `snipeit_get_asset` (by id/tag/serial + licenses/history/assigned), `snipeit_list_entities` + `snipeit_get_entity` (licenses incl. seats, accessories incl. checkedout rows, consumables, components, users incl. their assets, locations, status labels, categories, manufacturers, models, companies, departments, suppliers, custom fields, fieldsets, kits, maintenances, depreciations, groups), `snipeit_get_activity_report`, `snipeit_search_capabilities`.
@@ -85,7 +87,7 @@ permissions and records their name in its history.
 ```env
 SNIPEIT_PER_USER_AUTH=true
 SNIPEIT_TRUST_FORWARDED_USER=true
-MCP_HTTP_TOKEN=<shared secret the gateway sends as Bearer>
+MCP_HTTP_TOKEN=<shared secret the gateway sends as Bearer; openssl rand -hex 32>
 SNIPEIT_ENCRYPTION_KEY=<min 16 chars>
 SNIPEIT_STORE_PATH=/data/store.json
 SNIPEIT_PUBLIC_BASE_URL=https://snipe-it.example.com
@@ -137,7 +139,35 @@ Requirements and sharp edges:
 
 ## Configuration
 
-See `.env.example` for the full list.
+See `.env.example` for the full list. `SNIPEIT_TIMEOUT_MS` must be a plain integer; an invalid value stops the server at startup.
+
+### HTTP transport
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `MCP_HTTP_HOST` / `HOST` | `127.0.0.1` | Bind address. |
+| `PORT` | `3000` | Listen port. |
+| `MCP_HTTP_TOKEN` | – | Bearer token required on `/mcp`. At least 32 printable ASCII characters, e.g. `openssl rand -hex 32`. Required for any non-loopback bind and with `MCP_ALLOW_ANY_ORIGIN=true`. |
+| `MCP_HTTP_ALLOW_UNAUTHENTICATED` | `false` | Serve a non-loopback bind without a token (only when access is restricted by other means). |
+| `MCP_ALLOWED_ORIGINS` | localhost origins | Comma-separated exact `Origin` values allowed. Requests without `Origin` (server-to-server) are allowed. |
+| `MCP_ALLOW_ANY_ORIGIN` | `false` | Allow every origin (requires `MCP_HTTP_TOKEN`). |
+| `MCP_ALLOWED_HOSTS` | – | Comma-separated host names accepted in the `Host` header. Without it, a loopback bind only accepts localhost names and no check is done on other binds. |
+| `MCP_MAX_BODY_BYTES` | `10485760` | Maximum request body. |
+| `MCP_AUTH_FAILURE_LIMIT` | `20` | Failed authentication attempts per client address and window before further failures get 429; `0` disables. Valid tokens are never throttled. |
+| `MCP_AUTH_FAILURE_WINDOW_MS` | `60000` | Window for the limit above. |
+
+`GET /healthz` answers `{"ok":true,"perUserAuth":<true|false>}` without authentication. 401 responses carry
+`WWW-Authenticate: Bearer`; invalid JSON gets 400. The server shuts down gracefully on SIGTERM/SIGINT.
+
+`/healthz` and `/snipeit/enroll` are served without the bearer token, exactly as before (the enrollment page is reached by a browser and protected by its single-use state token). The `Host` check applies to `/mcp` only. `SNIPEIT_TRUST_FORWARDED_USER=true` always requires `MCP_HTTP_TOKEN`, also with `MCP_HTTP_ALLOW_UNAUTHENTICATED=true`.
+
+## Security model
+
+- In shared-token mode every caller acts as the owner of `SNIPEIT_API_TOKEN`. With per-user auth each caller acts with their own enrolled Snipe-IT token, so Snipe-IT applies that person's permissions.
+- Deciding who may reach this server, and asserting who the caller is (`X-MCP-User`), belongs in an identity-aware gateway in front of it. `MCP_HTTP_TOKEN` only authenticates that gateway.
+- Tool access is not data access: `SNIPEIT_ENABLE_WRITES` and the tool set limit what can be called, not what the token can read.
+- The HTTP server does not terminate TLS. Run it on a private network or behind a TLS-terminating proxy; the enrollment page in particular must only be exposed over HTTPS.
+- Upstream redirects are never followed, so the token is only sent to `SNIPEIT_BASE_URL`. Error bodies are read up to 64 KB, tokens are redacted before error text is truncated, and error URLs omit query strings.
 
 ## Run
 

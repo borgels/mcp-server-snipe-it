@@ -19,7 +19,9 @@ const config = { host: '127.0.0.1', port: 0, maxBodyBytes: 1024, httpToken: 'gat
 describe('MCP_HTTP_TOKEN comparison', () => {
   it('accepts only the exact bearer', () => {
     expect(() => assertAuthorized(req('Bearer gateway-secret'), config)).not.toThrow();
-    for (const bad of [undefined, '', 'Bearer ', 'Bearer gateway-secre', 'Bearer gateway-secretX', 'gateway-secret', 'bearer gateway-secret']) {
+    // The scheme is case-insensitive (RFC 9110); the token itself must match exactly.
+    expect(() => assertAuthorized(req('bearer gateway-secret'), config)).not.toThrow();
+    for (const bad of [undefined, '', 'Bearer ', 'Bearer gateway-secre', 'Bearer gateway-secretX', 'gateway-secret', 'Basic gateway-secret']) {
       expect(() => assertAuthorized(req(bad), config)).toThrow(HttpRequestError);
     }
   });

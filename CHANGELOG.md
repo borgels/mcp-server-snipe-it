@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.4.0
+
+### Upgrade notes
+
+- The HTTP server refuses to start on a non-loopback bind (`MCP_HTTP_HOST`/`HOST` other than
+  127.0.0.1/localhost/::1), or with `MCP_ALLOW_ANY_ORIGIN=true`, unless `MCP_HTTP_TOKEN` is set.
+  `MCP_HTTP_ALLOW_UNAUTHENTICATED=true` is an explicit escape hatch for networks restricted by
+  other means. `SNIPEIT_TRUST_FORWARDED_USER=true` still always requires the token.
+- `MCP_HTTP_TOKEN` must be at least 32 printable ASCII characters (e.g. `openssl rand -hex 32`).
+  The `Bearer` scheme is now matched case-insensitively.
+- `PORT`, `MCP_MAX_BODY_BYTES`, `SNIPEIT_TIMEOUT_MS` and the boolean `MCP_*` flags are validated;
+  invalid values stop the server at startup instead of becoming NaN. The HTTP server also
+  validates `SNIPEIT_BASE_URL` at startup in shared-token mode.
+- New optional variables: `MCP_HTTP_ALLOW_UNAUTHENTICATED`, `MCP_ALLOWED_HOSTS`,
+  `MCP_AUTH_FAILURE_LIMIT`, `MCP_AUTH_FAILURE_WINDOW_MS`.
+- `/healthz` and `/snipeit/enroll` are unchanged and remain reachable without the token.
+
+### Changes
+
+- HTTP: 401 responses carry `WWW-Authenticate: Bearer`; invalid JSON gets 400 (JSON-RPC parse
+  error) instead of 500; oversized bodies get 413 before the body is read when `Content-Length`
+  is too large (also on the enrollment form).
+- HTTP: failed authentication on `/mcp` is counted per client address; after the limit further
+  failures get 429 with `Retry-After`. Valid tokens are never throttled.
+- HTTP: `Host` header check on `/mcp` for loopback binds; graceful shutdown on SIGTERM/SIGINT;
+  one log line per rejected request (without query strings).
+- Snipe-IT client: redirects are never followed, so the token is only sent to
+  `SNIPEIT_BASE_URL`. Error bodies are read up to 64 KB; configured and enrolled tokens are
+  redacted by value before error text is truncated; query strings are not included in error URLs.
+- The server reports the package version.
+- Dependencies updated within their ranges; `fast-uri` and `@hono/node-server` overrides moved to
+  the patched lines declared by their dependents. Container images are published only after CI
+  passes, with SBOM and provenance attestations. Text files are normalised to LF.
+
 ## 0.3.0
 
 Makes reachable what the API already exposed. No new tools — the tool count is
