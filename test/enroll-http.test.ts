@@ -7,7 +7,6 @@ import type { AddressInfo, Server } from 'node:net';
 import { SnipeItClient } from '../src/snipeit/client.js';
 import { CredentialStore } from '../src/snipeit/store.js';
 import { createHttpApp } from '../src/transports/http-app.js';
-import { getHttpConfig } from '../src/transports/http-helpers.js';
 
 const originalEnv = { ...process.env };
 let dir: string;
@@ -53,7 +52,8 @@ async function boot(opts: { verify?: (token: string) => unknown; perUser?: boole
 
   const enrollClient = new SnipeItClient({ baseUrl: 'https://assets.example.com', fetchImpl });
   const app = createHttpApp({
-    config: getHttpConfig(),
+    // The handler itself; startup checks (getHttpConfig) are covered elsewhere.
+    config: { host: '127.0.0.1', port: 0, maxBodyBytes: 10_485_760, httpToken: process.env.MCP_HTTP_TOKEN || undefined },
     perUser: opts.perUser ?? true,
     store,
     enrollClient,
@@ -192,7 +192,7 @@ describe('/snipeit/enroll', () => {
   });
 
   it('refuses /mcp without the gateway bearer when one is configured', async () => {
-    process.env.MCP_HTTP_TOKEN = 'gateway-secret';
+    process.env.MCP_HTTP_TOKEN = 'gateway-secret-0123456789abcdef0123456789';
     const { base } = await boot();
     const res = await fetch(`${base}/mcp`, {
       method: 'POST',

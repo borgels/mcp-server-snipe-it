@@ -11,7 +11,7 @@ import { dirname, join } from 'node:path';
  * tool argument: it would then sit in the conversation transcript forever, and
  * a Snipe-IT token is bearer-equivalent to that user's whole account. Instead
  * the user pastes it into a short-lived, state-bound browser form (see
- * transports/http.ts) — the same shape mcp-server-hevy uses.
+ * transports/http-app.ts).
  *
  * Tokens are encrypted at rest with AES-256-GCM, one row per gateway-verified
  * identity, so a user can only ever reach their own row.
