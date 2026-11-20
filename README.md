@@ -161,6 +161,180 @@ See `.env.example` for the full list. `SNIPEIT_TIMEOUT_MS` must be a plain integ
 
 `/healthz` and `/snipeit/enroll` are served without the bearer token, exactly as before (the enrollment page is reached by a browser and protected by its single-use state token). The `Host` check applies to `/mcp` only. `SNIPEIT_TRUST_FORWARDED_USER=true` always requires `MCP_HTTP_TOKEN`, also with `MCP_HTTP_ALLOW_UNAUTHENTICATED=true`.
 
+## Embedding (`./gateway`)
+
+`mcp-server-snipe-it/gateway` lets a host application run a narrow set of
+tools in-process instead of over MCP, in the same shape as
+`mcp-server-template`. One process can run several gateway instances, for
+example one per tenant, each on the customer's own Snipe-IT address.
+
+```ts
+import { createSnipeItGateway, normalizeSnipeItBaseUrl, snipeItToolCatalog } from 'mcp-server-snipe-it/gateway';
+
+// Before storing an address a customer typed: throws GatewayConfigError, or returns https://<host>.
+const baseUrl = normalizeSnipeItBaseUrl(input.address);
+
+const gateway = createSnipeItGateway({
+  apiToken: tenant.snipeItApiKey,
+  baseUrl,
+  policy: { enableWrites: true, audit: record => log(record) },
+});
+const result = await gateway.callTool('list_assets', { status: 'Deployed', limit: 20 }, { caller: 'user-1' });
+```
+
+The module exports:
+
+- `createSnipeItGateway({ apiToken, baseUrl, fetchImpl?, timeoutMs?, resolveHost?, policy? })`.
+  `apiToken` is a Snipe-IT personal API key (sent as `Authorization: Bearer`),
+  `baseUrl` the customer's Snipe-IT address (`https://assets.example.com`; the
+  client adds `/api/v1`). Both are required and never read from the
+  environment. The gateway reads no `SNIPEIT_*` variable at all: not
+  `SNIPEIT_API_TOKEN`, `SNIPEIT_BASE_URL`, `SNIPEIT_TIMEOUT_MS` (default 30
+  seconds), `SNIPEIT_ENABLE_WRITES` (the host's policy decides), the per-user
+  mode and its store (`SNIPEIT_PER_USER_AUTH`, `SNIPEIT_STORE_PATH`,
+  `SNIPEIT_ENCRYPTION_KEY`, `SNIPEIT_PUBLIC_BASE_URL`,
+  `SNIPEIT_TRUST_FORWARDED_USER`) or `SNIPEIT_AUDIT_LOG`. There are no
+  connect, status or disconnect tools: every call runs as the user who owns
+  the API key, with that user's Snipe-IT permissions. Per-person rights are
+  the host's business.
+- `normalizeSnipeItBaseUrl(url)`: a pure check a host can run before it
+  stores an address. It returns `https://<host>` (lower case, no trailing slash
+  or dot) or throws `GatewayConfigError` with a message starting
+  `Snipe-IT address refused:` (`ADDRESS_REFUSED`) that never quotes the value.
+  Refused: anything but `https://`, a user name or password, a port, a path, a
+  query string or a fragment, an IP address, `localhost` and local or
+  single-label names (`.local`, `.internal`, `.lan`, `.home.arpa`, ...).
+- `gateway.tools` (the tools enabled on the instance) and
+  `gateway.callTool(name, input, { caller, requestId })`. Names are accepted
+  with or without the `snipeit_` prefix. Input is validated with the tool's zod
+  schema before anything is sent, and unknown fields are refused. The audit
+  records of a call hold `caller` only as an HMAC pseudonym (a per-process
+  key) and a request id of the server's own; the host's `requestId` is not
+  written. An error is recorded as a fixed code (`http_<status>`, `timeout` or
+  `error`), never as its message.
+- `snipeItGatewayTools`: the definitions (`name` without prefix, `title`,
+  `description`, `riskLevel`, `enabledByDefault`, `inputSchema` as JSON Schema
+  derived from the zod schema the call is validated with).
+- `snipeItToolCatalog`: the same tools, deeply frozen, with `upstream` (method
+  and path template of every Snipe-IT request the tool may make) and `broad`
+  (no Snipe-IT gateway tool is broad).
+- `GatewayConfigError`, `KEY_REFUSED`, `ADDRESS_REFUSED`,
+  `PRIVATE_ADDRESS_REFUSED` and the types (`SnipeItGatewayOptions`,
+  `SnipeItGateway`, `InstancePolicy`, `AuditSink`, `GatewayToolDefinition`,
+  `GatewayToolCatalogEntry`, `GatewayUpstreamOperation`, `GatewayToolResult`,
+  `GatewayCallContext` and the JSON types such as `GatewayJsonObject`).
+
+| Tool | Risk | Default | Snipe-IT requests (on `baseUrl`) |
+|---|---|---|---|
+| `search_capabilities` | read | on | none |
+| `check_connection` | read | on | `GET /api/v1/users/me` |
+| `list_assets` | read | on | `GET /api/v1/hardware`, `GET /api/v1/hardware/audits/{state}`, `GET /api/v1/hardware/checkins/{state}` |
+| `get_asset` | read | on | `GET /api/v1/hardware/{assetId}`, `GET /api/v1/hardware/bytag/{assetTag}`, `GET /api/v1/hardware/byserial/{serial}` |
+| `list_licenses` | read | on | `GET /api/v1/licenses` |
+| `get_license` | read | on | `GET /api/v1/licenses/{licenseId}`, `GET /api/v1/licenses/{licenseId}/seats` |
+| `list_accessories` | read | on | `GET /api/v1/accessories` |
+| `list_consumables` | read | on | `GET /api/v1/consumables` |
+| `list_components` | read | on | `GET /api/v1/components` |
+| `list_users` | read | on | `GET /api/v1/users`, `GET /api/v1/users/{userId}` |
+| `list_locations` | read | on | `GET /api/v1/locations` |
+| `list_reference_data` | read | on | `GET /api/v1/models`, `/categories`, `/manufacturers`, `/statuslabels`, `/suppliers`, `/departments` (one per call) |
+| `get_activity_report` | read | on | `GET /api/v1/reports/activity` |
+| `create_asset` | write | off | `POST /api/v1/hardware` |
+| `update_asset` | write | off | `PATCH /api/v1/hardware/{assetId}` |
+| `checkout_asset` | write | off | `POST /api/v1/hardware/{assetId}/checkout` |
+| `checkin_asset` | write | off | `POST /api/v1/hardware/{assetId}/checkin` |
+| `audit_asset` | write | off | `POST /api/v1/hardware/{assetId}/audit` |
+| `checkout_license_seat` | write | off | `PATCH /api/v1/licenses/{licenseId}/seats/{seatId}` |
+| `checkin_license_seat` | write | off | `PATCH /api/v1/licenses/{licenseId}/seats/{seatId}` |
+
+The tools are narrow on purpose: there is no generic entity list, get, create
+or update in the gateway, no free-form payload and no raw path, and nothing
+deletes. `update_asset` changes only name, status label, location, default
+location, notes, order number, purchase date and warranty months. Read tools
+get a client that can only `GET`. The MCP server's own tools
+(`snipeit_list_entities`, `snipeit_create_entity`, `snipeit_checkout`, ...)
+are unchanged.
+
+**What an answer holds.** Every answer is projected onto an allowlist of
+fields per kind of record; a field not on the list is never passed on. A
+license's product key (`product_key`, the license `serial`) is never
+returned, nor are custom fields of assets (they can hold encrypted values such
+as recovery keys), phone numbers, addresses, employee numbers or permissions
+of users, or the IP address, user agent and change details of activity
+entries. A user is returned as name, user name, email, department, location
+and the counts of what is assigned.
+
+**Address and network.** Every connection goes only to public addresses:
+the host name is resolved and every address must be public unicast
+(private, loopback, link-local, carrier-grade NAT, unique local, metadata
+and documentation ranges, and IPv4 embedded in IPv6 are refused). With the
+built-in fetch the check runs in the connection's own lookup, so the address
+checked is the address used (DNS rebinding is checked per connection). With
+a host `fetchImpl` the name is checked before every request. A refusal
+happens at the call, not at construction, as an error result
+`Refused: the Snipe-IT address points to a private or local network address.`
+(`PRIVATE_ADDRESS_REFUSED`); a name that does not resolve gives
+`Network error calling the Snipe-IT API (GET) (ENOTFOUND).` Redirects are
+never followed.
+
+**Instance policy.** With `policy: { enableWrites, disabledTools, audit }`
+the host decides the instance's policy: write tools run only with
+`enableWrites: true`; disabled tools are left out of `tools` (and out of
+`search_capabilities`) and refused when called; audit records go to `audit`
+(none without it). `disabledTools` must name gateway tools. A sink that
+throws on a start record refuses the call. Without `policy` the instance uses
+the default policy (no writes, no disabled tools, no audit records). Every
+call runs in a call scope of its own (AsyncLocalStorage), so a call made from
+inside another instance's call never inherits its policy, sink, redactor or
+caller. There is no process-wide registry of secrets.
+
+**Results.** A successful result is a short English summary line, a blank
+line and the data as compact JSON, exactly equal to `structuredContent`. The
+data is redacted twice before it is serialised: credential-shaped text
+(Authorization headers, Bearer and Basic values, JSON Web Tokens, credential
+assignments) and the value of credential-named fields are masked, and the
+instance's API key (exact, encoded, and any piece of 6 characters or more, in
+strings, keys and the string form of numbers) is replaced by `‹redacted›`. An
+answer from Snipe-IT that is not JSON is refused.
+
+**Errors.** An error result carries our own English text, never Snipe-IT's
+response body or messages, a redirect's `Location` or the configured address.
+An HTTP failure starts with `Snipe-IT API request failed with HTTP <status>`,
+followed by our own hint (401, 403, 404, 422, 429) and the parsed
+`retry-after` where there is one. Snipe-IT often answers HTTP 200 with
+`{"status":"error","messages":...}`; the gateway turns that into
+`Snipe-IT refused the request (it answered with status "error"). ...` without
+its messages. Other errors start with `Invalid input for <tool>:`,
+`Unsupported Snipe-IT gateway tool.`, `Snipe-IT API responded with a redirect
+(HTTP <status>)`, `Network error calling the Snipe-IT API`, `Snipe-IT API
+request timed out after`, `Snipe-IT answered with something that is not
+JSON`, `Refused: the Snipe-IT address points to a private or local network
+address.`, or a policy refusal (`writes are disabled. ...`, `tool is disabled
+on this instance by the embedding host: <tool>`).
+
+**Key admission and the sink check.** A gateway accepts only an API key of
+printable ASCII (0x21-0x7E) of at least 16 characters that shares no piece of
+6 characters with a string literal in `src/` (`src/fixed-corpus.generated.ts`,
+kept up to date by a test), with the fixed fallbacks (`src/fallbacks.ts`) or
+with the tool list. A refused key throws `GatewayConfigError` at construction
+(`options.apiToken: A credential was refused: ...`), before anything is built
+or sent; the refusal holds no piece of the key, and every error a gateway
+throws has no `cause` and a `stack` of only `name: message`. As the very last
+step every output (the tool list, each result, each audit record) is checked
+in its final form, and one that still holds a piece of the key is replaced by
+a fixed fallback. Whether Snipe-IT accepts the key is only known at the first
+call (`check_connection`: HTTP 401).
+
+**A key for the gateway.** In Snipe-IT, the user the gateway should act as
+creates a personal API key under the user menu, *Manage API Keys* (their
+permission group needs the *Self: Create API keys* permission). The key is a
+long JSON Web Token; pass it whole. The gateway can do what
+that user may do: for the read tools the user needs view rights on assets,
+licenses, accessories, consumables, components, users, locations and the
+reference data and reports; for the write tools also create, edit, checkout,
+checkin and audit on assets and checkout on licenses. Snipe-IT records every
+change as that user's.
+
 ## Security model
 
 - In shared-token mode every caller acts as the owner of `SNIPEIT_API_TOKEN`. With per-user auth each caller acts with their own enrolled Snipe-IT token, so Snipe-IT applies that person's permissions.

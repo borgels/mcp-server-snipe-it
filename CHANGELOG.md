@@ -1,5 +1,49 @@
 # Changelog
 
+## 0.5.0 (2026-11-20)
+
+The gateway entry point (`./gateway`) in the shape of `mcp-server-template`,
+for hosts that run one instance per tenant in a shared process, each on the
+customer's own Snipe-IT address.
+
+### Changes
+
+- `createSnipeItGateway({ apiToken, baseUrl, fetchImpl?, timeoutMs?, resolveHost?, policy? })`:
+  the API key and the customer's Snipe-IT address are required and never read
+  from the environment; the gateway reads no `SNIPEIT_*` variable. It has no
+  connect, status or disconnect tools: every call runs as the key's own user.
+- `normalizeSnipeItBaseUrl(url)`: https and a public host name only (no user
+  info, port, path, query or fragment, no IP address or local name). Every
+  connection of a gateway goes only to public addresses, checked by DNS per
+  connection (built-in fetch) or before every request (host fetch).
+  Redirects are never followed.
+- Narrow tools: reads `search_capabilities`, `check_connection`,
+  `list_assets`, `get_asset`, `list_licenses`, `get_license`,
+  `list_accessories`, `list_consumables`, `list_components`, `list_users`,
+  `list_locations`, `list_reference_data`, `get_activity_report`; writes (off
+  by default) `create_asset`, `update_asset`, `checkout_asset`,
+  `checkin_asset`, `audit_asset`, `checkout_license_seat`,
+  `checkin_license_seat`. No generic entity tools, no free-form payload, no
+  delete.
+- Every answer is projected onto an allowlist of fields: license product
+  keys, asset custom fields, users' phone numbers, addresses and employee
+  numbers, and activity IP addresses and change details are never returned.
+- `snipeItToolCatalog`: deeply frozen, with `inputSchema` from the strict zod
+  schema, `upstream` and `broad`.
+- Key admission, host policy `{ enableWrites, disabledTools, audit }`, call
+  scopes, redaction per instance, the sink check and sealed construction
+  errors, as in the template. The audit records the caller as an HMAC
+  pseudonym and an error as a fixed code.
+- Gateway errors are our own text: `Snipe-IT API request failed with HTTP
+  <status>` with our hint and `retry-after`; Snipe-IT's error bodies are never
+  read, and a `{"status":"error"}` answer on HTTP 200 becomes a fixed text
+  without its messages. The MCP server's own tools and error texts are
+  unchanged.
+
+### Upgrade notes
+
+- Node 22.19 or later (the gateway uses `undici` and `ipaddr.js`).
+
 ## 0.4.0
 
 ### Upgrade notes
