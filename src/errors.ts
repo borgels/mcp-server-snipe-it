@@ -62,6 +62,8 @@ export class SnipeItHttpError extends Error {
     payload?: SnipeItErrorPayload | unknown;
     retryAfter?: string;
     fallbackMessage?: string;
+    /** Our own guidance, right after the status (used by the embedded gateway, which reads no body). */
+    hint?: string;
   }) {
     super(formatSnipeItHttpError(input));
     this.name = 'SnipeItHttpError';
@@ -102,10 +104,12 @@ function formatSnipeItHttpError(input: {
   payload?: SnipeItErrorPayload | unknown;
   retryAfter?: string;
   fallbackMessage?: string;
+  hint?: string;
 }): string {
   const payload = isSnipeItErrorPayload(input.payload) ? input.payload : undefined;
   const parts = [
     `Snipe-IT API request failed with HTTP ${input.status}`,
+    input.hint,
     payload?.code === undefined ? undefined : `code=${truncate(redactSecrets(String(payload.code)), 64)}`,
     textPart(payload?.error),
     textPart(payload?.message),

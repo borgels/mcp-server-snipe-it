@@ -1,3 +1,5 @@
+import { currentInstancePolicy } from './scope.js';
+
 /**
  * Read tools are always on. Write tools require SNIPEIT_ENABLE_WRITES=true
  * on the instance. There are deliberately NO delete tools: most Snipe-IT
@@ -87,7 +89,58 @@ const WRITE_TOOLS = new Set([
  */
 const AUTH_TOOLS = new Set(['snipeit_connect', 'snipeit_status', 'snipeit_disconnect']);
 
+/** The embedded gateway's tools (prefixed names), and which of them change data in Snipe-IT. */
+export const GATEWAY_READ_TOOLS: ReadonlySet<string> = new Set([
+  'snipeit_search_capabilities',
+  'snipeit_check_connection',
+  'snipeit_list_assets',
+  'snipeit_get_asset',
+  'snipeit_list_licenses',
+  'snipeit_get_license',
+  'snipeit_list_accessories',
+  'snipeit_list_consumables',
+  'snipeit_list_components',
+  'snipeit_list_users',
+  'snipeit_list_locations',
+  'snipeit_list_reference_data',
+  'snipeit_get_activity_report',
+]);
+
+export const GATEWAY_WRITE_TOOLS: ReadonlySet<string> = new Set([
+  'snipeit_create_asset',
+  'snipeit_update_asset',
+  'snipeit_checkout_asset',
+  'snipeit_checkin_asset',
+  'snipeit_audit_asset',
+  'snipeit_checkout_license_seat',
+  'snipeit_checkin_license_seat',
+]);
+
+/**
+ * Inside a gateway call (always under an InstancePolicy, src/snipeit/scope.ts)
+ * no environment variable is read: a tool the host disabled is refused, and a
+ * write tool runs only when the host enabled writes.
+ */
+function checkHostedToolPolicy(toolName: string): SnipeItPolicyDecision {
+  const hosted = currentInstancePolicy()!;
+  if (hosted.disabledTools.has(toolName)) {
+    return { allowed: false, reason: `tool is disabled on this instance by the embedding host: ${toolName}` };
+  }
+  if (GATEWAY_READ_TOOLS.has(toolName)) {
+    return { allowed: true, reason: 'read tool' };
+  }
+  if (GATEWAY_WRITE_TOOLS.has(toolName)) {
+    return hosted.enableWrites
+      ? { allowed: true, reason: 'writes enabled by the embedding host' }
+      : { allowed: false, reason: 'writes are disabled. The embedding host has not enabled writes for this instance.' };
+  }
+  return { allowed: false, reason: 'tool is not a gateway tool.' };
+}
+
 export function checkToolPolicy(toolName: string): SnipeItPolicyDecision {
+  if (currentInstancePolicy()) {
+    return checkHostedToolPolicy(toolName);
+  }
   if (AUTH_TOOLS.has(toolName)) {
     return { allowed: true, reason: 'credential management (local token store only)' };
   }
