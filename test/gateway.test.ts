@@ -285,9 +285,42 @@ describe('Snipe-IT gateway upstream requests', () => {
     await g.callTool('checkout_asset', { assetId: 7, targetType: 'location', targetId: 5, note: 'Lager' });
     expect(JSON.parse(String(fetchImpl.mock.calls[0]![1]?.body))).toEqual({ checkout_to_type: 'location', assigned_location: 5, note: 'Lager' });
     await g.callTool('checkout_license_seat', { licenseId: 3, seatId: 17, targetType: 'asset', targetId: 7 });
-    expect(JSON.parse(String(fetchImpl.mock.calls[1]![1]?.body))).toEqual({ asset_id: 7 });
+    expect(requestOf(...fetchImpl.mock.calls[1]!)).toBe('GET /api/v1/licenses/3/seats/17');
+    expect(JSON.parse(String(fetchImpl.mock.calls[2]![1]?.body))).toEqual({ asset_id: 7 });
     await g.callTool('checkin_license_seat', { licenseId: 3, seatId: 17 });
-    expect(JSON.parse(String(fetchImpl.mock.calls[2]![1]?.body))).toEqual({ assigned_to: null, asset_id: null });
+    expect(JSON.parse(String(fetchImpl.mock.calls[3]![1]?.body))).toEqual({ assigned_to: null, asset_id: null });
+  });
+
+  it('refuses to assign a seat that is taken, so a user and an asset never share one', async () => {
+    for (const holder of [{ assigned_user: { id: 12, name: 'Mette' } }, { assigned_asset: { id: 7, name: 'Laptop 7' } }]) {
+      const fetchImpl = snipeit({ id: 17, license_id: 3, ...holder });
+      const result = await gateway(fetchImpl, { policy: { enableWrites: true } }).callTool('checkout_license_seat', {
+        licenseId: 3,
+        seatId: 17,
+        targetType: 'asset',
+        targetId: 8,
+      });
+      expect(result.isError).toBe(true);
+      expect(result.content[0]!.text).toMatch(/^The seat is taken\./);
+      expect(fetchImpl.mock.calls.map(([url, init]) => requestOf(url, init))).toEqual(['GET /api/v1/licenses/3/seats/17']);
+    }
+  });
+
+  it('refuses an activity filter given as type or id alone, which Snipe-IT would ignore', async () => {
+    const fetchImpl = snipeit();
+    for (const [input, text] of [
+      [{ itemType: 'license' }, 'Give itemType and itemId together, or neither.'],
+      [{ itemId: 3 }, 'Give itemType and itemId together, or neither.'],
+      [{ targetType: 'user' }, 'Give targetType and targetId together, or neither.'],
+      [{ targetId: 12 }, 'Give targetType and targetId together, or neither.'],
+    ] as Array<[GatewayJsonObject, string]>) {
+      const result = await gateway(fetchImpl).callTool('get_activity_report', input);
+      expect(result.content[0]!.text).toBe(text);
+    }
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect((await gateway(fetchImpl).callTool('get_activity_report', { itemType: 'license', itemId: 3 })).isError).toBeUndefined();
+    const url = new URL(String(fetchImpl.mock.calls[0]![0]));
+    expect([url.searchParams.get('item_type'), url.searchParams.get('item_id')]).toEqual(['license', '3']);
   });
 
   it('filters assets by assignee with Snipe-IT’s own type names, and caps the page size', async () => {

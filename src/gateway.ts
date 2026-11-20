@@ -274,7 +274,7 @@ const GATEWAY_TOOLS: ReadonlyArray<{
     name: 'get_activity_report',
     title: 'Get Snipe-IT activity report',
     description:
-      'Recent activity (checkouts, checkins, updates, audits), newest first, at most 100 entries per call, filtered by item, action or target: who did what, when, to which item.',
+      'Recent activity (checkouts, checkins, updates, audits), newest first, at most 100 entries per call, filtered by item (itemType with itemId), action or target (targetType with targetId): who did what, when, to which item.',
     riskLevel: 'read',
     summary: 'Snipe-IT activity.',
     upstream: [get('/reports/activity')],
@@ -324,10 +324,11 @@ const GATEWAY_TOOLS: ReadonlyArray<{
   {
     name: 'checkout_license_seat',
     title: 'Assign Snipe-IT license seat',
-    description: 'Assign one seat of a license (seatId from get_license with includeSeats) to a user (default) or an asset.',
+    description:
+      'Assign one free seat of a license (seatId from get_license with includeSeats) to a user (default) or an asset. A taken seat is refused; free it first with checkin_license_seat.',
     riskLevel: 'write',
     summary: 'Snipe-IT license seat assigned.',
-    upstream: [patch('/licenses/{licenseId}/seats/{seatId}')],
+    upstream: [get('/licenses/{licenseId}/seats/{seatId}'), patch('/licenses/{licenseId}/seats/{seatId}')],
   },
   {
     name: 'checkin_license_seat',

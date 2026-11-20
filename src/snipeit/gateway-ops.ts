@@ -450,6 +450,14 @@ export async function getActivityReport(
     offset?: number;
   },
 ): Promise<unknown> {
+  // Snipe-IT applies an item or target filter only when both its type and its id are given; one alone would be
+  // ignored silently and the answer would look filtered.
+  if ((input.itemType === undefined) !== (input.itemId === undefined)) {
+    throw new Error('Give itemType and itemId together, or neither.');
+  }
+  if ((input.targetType === undefined) !== (input.targetId === undefined)) {
+    throw new Error('Give targetType and targetId together, or neither.');
+  }
   return list(
     await client.get('/reports/activity', {
       item_type: input.itemType,
@@ -577,6 +585,11 @@ export async function checkoutLicenseSeat(
   client: SnipeItClient,
   input: { licenseId: number; seatId: number; targetType?: 'user' | 'asset'; targetId: number; note?: string },
 ): Promise<unknown> {
+  // Only a free seat is assigned: Snipe-IT keeps an existing assignment of the other kind, so a taken seat is refused.
+  const seat = asObject(await client.get(`/licenses/${input.licenseId}/seats/${input.seatId}`)) ?? {};
+  if (asObject(seat.assigned_user) || asObject(seat.assigned_asset)) {
+    throw new Error('The seat is taken. Free it first with checkin_license_seat, or pick a free seat (get_license with includeSeats).');
+  }
   const target = (input.targetType ?? 'user') === 'user' ? { assigned_to: input.targetId } : { asset_id: input.targetId };
   return written(
     await client.patch(`/licenses/${input.licenseId}/seats/${input.seatId}`, { ...target, notes: input.note }),

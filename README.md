@@ -244,7 +244,7 @@ The module exports:
 | `checkout_asset` | write | off | `POST /api/v1/hardware/{assetId}/checkout` |
 | `checkin_asset` | write | off | `POST /api/v1/hardware/{assetId}/checkin` |
 | `audit_asset` | write | off | `POST /api/v1/hardware/{assetId}/audit` |
-| `checkout_license_seat` | write | off | `PATCH /api/v1/licenses/{licenseId}/seats/{seatId}` |
+| `checkout_license_seat` | write | off | `GET /api/v1/licenses/{licenseId}/seats/{seatId}`, `PATCH /api/v1/licenses/{licenseId}/seats/{seatId}` (only a free seat) |
 | `checkin_license_seat` | write | off | `PATCH /api/v1/licenses/{licenseId}/seats/{seatId}` |
 
 The tools are narrow on purpose: there is no generic entity list, get, create
