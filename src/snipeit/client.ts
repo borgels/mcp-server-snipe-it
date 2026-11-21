@@ -1,5 +1,5 @@
 import { ConfigError, readEnvInteger } from '../config-env.js';
-import { describeUrl, registerSecret, SnipeItHttpError } from '../errors.js';
+import { describeUrl, registerSecret, requestIdFrom, SnipeItAnswerError, SnipeItHttpError } from '../errors.js';
 import type { SecretRedactor } from '../upstream-http.js';
 import { isPublicAddress, pinnedFetch, systemResolve, type ResolveHost } from './network.js';
 
@@ -217,9 +217,11 @@ export class SnipeItClient {
 
     if (response.type === 'opaqueredirect' || (response.status >= 300 && response.status < 400)) {
       void response.body?.cancel().catch(() => undefined);
-      throw new Error(
+      throw new SnipeItAnswerError(
         `Snipe-IT API responded with a redirect (HTTP ${response.status}) for ${method} ${describeUrl(url)}; ` +
           'redirects are not followed. Check that SNIPEIT_BASE_URL is the final https:// address.',
+        response.status,
+        requestIdFrom(response.headers),
       );
     }
 
@@ -230,6 +232,7 @@ export class SnipeItClient {
         url,
         payload: responseBody,
         retryAfter: response.headers.get('retry-after') ?? undefined,
+        requestId: requestIdFrom(response.headers),
         fallbackMessage: typeof responseBody === 'string' ? responseBody : undefined,
       });
     }
@@ -241,6 +244,7 @@ export class SnipeItClient {
         status: response.status,
         url,
         payload: responseBody,
+        requestId: requestIdFrom(response.headers),
         fallbackMessage: formatMessages(responseBody.messages),
       });
     }
@@ -289,9 +293,11 @@ export class SnipeItClient {
 
     if (response.type === 'opaqueredirect' || (response.status >= 300 && response.status < 400)) {
       await discard(response);
-      throw new Error(
+      throw new SnipeItAnswerError(
         `Snipe-IT API responded with a redirect (HTTP ${response.status}) for ${method}; ` +
           'redirects are not followed. Check that the Snipe-IT address is the final https:// address of the instance.',
+        response.status,
+        requestIdFrom(response.headers),
       );
     }
 
@@ -303,6 +309,7 @@ export class SnipeItClient {
         url,
         hint: Object.hasOwn(STATUS_HINTS, response.status) ? STATUS_HINTS[response.status] : undefined,
         retryAfter: wholeNumber(response.headers.get('retry-after') ?? undefined),
+        requestId: requestIdFrom(response.headers),
       });
     }
 
@@ -328,7 +335,7 @@ export class SnipeItClient {
     }
     // HTTP 200 does not mean success in Snipe-IT; its messages are not passed on.
     if (isErrorEnvelope(parsed)) {
-      throw new Error(SNIPEIT_REFUSED);
+      throw new SnipeItAnswerError(SNIPEIT_REFUSED, response.status, requestIdFrom(response.headers));
     }
     return parsed as T;
   }

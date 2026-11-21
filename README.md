@@ -297,7 +297,7 @@ instance's API key (exact, encoded, and any piece of 6 characters or more, in
 strings, keys and the string form of numbers) is replaced by `‹redacted›`. An
 answer from Snipe-IT that is not JSON is refused.
 
-**Errors.** An error result carries our own English text, never Snipe-IT's
+**Errors.** The text of an error result is our own English, never Snipe-IT's
 response body or messages, a redirect's `Location` or the configured address.
 An HTTP failure starts with `Snipe-IT API request failed with HTTP <status>`,
 followed by our own hint (401, 403, 404, 422, 429) and the parsed
@@ -311,6 +311,17 @@ request timed out after`, `Snipe-IT answered with something that is not
 JSON`, `Refused: the Snipe-IT address points to a private or local network
 address.`, or a policy refusal (`writes are disabled. ...`, `tool is disabled
 on this instance by the embedding host: <tool>`).
+
+**Failure metadata.** When Snipe-IT answered with an error (an HTTP error, a
+refused redirect, or an answer with `"status": "error"` with the status it
+came with, usually 200), the error result also has
+`failure: { httpStatus, requestId? }`: the status, and Snipe-IT's request id
+from a response header (`REQUEST_ID_HEADERS` in `src/errors.ts`) only when it
+is a hex id of 8 to 64 characters (one run of hex digits, or groups of four or
+more joined by single hyphens, as in a UUID) and does not hold the shape of a
+personal number. It is checked again after redaction. A host can count
+failures from it without reading their text. Never the response body,
+Snipe-IT's error code or message.
 
 **Key admission and the sink check.** A gateway accepts only an API key of
 printable ASCII (0x21-0x7E) of at least 16 characters that shares no piece of

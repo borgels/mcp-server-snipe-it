@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.6.0
+
+- Gateway error results carry failure metadata: when Snipe-IT answered with
+  an error (an HTTP error, a refused redirect, or an answer with
+  `"status": "error"`, with the status it came with, usually 200), the result
+  has `failure: { httpStatus, requestId? }`, so a host can count failures by
+  status without reading their text. `requestId` is Snipe-IT's id from a
+  response header (`REQUEST_ID_HEADERS`), kept only when it is a hex id of 8
+  to 64 characters (one run of hex digits, or groups of four or more joined
+  by single hyphens, as in a UUID) and does not hold the shape of a personal
+  number. It is checked again after redaction, so an id that shared a piece
+  with the key is dropped. Never the body, Snipe-IT's error code or message.
+  The helpers are in `src/errors.ts` (`vendorRequestId`, `requestIdFrom`,
+  `failureMetadata`).
+
 ## 0.5.0 (2026-11-20)
 
 The gateway entry point (`./gateway`) in the shape of `mcp-server-template`,
